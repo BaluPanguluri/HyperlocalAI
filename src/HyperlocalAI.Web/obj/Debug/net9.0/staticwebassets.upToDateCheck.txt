@@ -1,0 +1,8 @@
+D:\2026_ArtificialIntelligence\HyperlocalAI\src\HyperlocalAI.Web\wwwroot\js\chat-export.js
+D:\2026_ArtificialIntelligence\HyperlocalAI\src\HyperlocalAI.Web\wwwroot\brand\localmind-mark.svg
+D:\2026_ArtificialIntelligence\HyperlocalAI\src\HyperlocalAI.Web\wwwroot\app.css
+D:\2026_ArtificialIntelligence\HyperlocalAI\src\HyperlocalAI.Web\wwwroot\js\chat-actions.js
+wwwroot\app.css
+wwwroot\brand\localmind-mark.svg
+wwwroot\js\chat-actions.js
+wwwroot\js\chat-export.js

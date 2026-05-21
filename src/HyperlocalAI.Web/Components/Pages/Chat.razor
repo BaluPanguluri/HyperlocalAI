@@ -1,0 +1,371 @@
+@page "/"
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Components.Web
+@inject IHyperlocalChatService ChatService
+@inject IOptions<HyperlocalAIOptions> AiOptions
+@inject IOptions<WhatsAppOptions> WhatsAppOptions
+@inject IJSRuntime JS
+
+<PageTitle>LocalMind AI</PageTitle>
+
+<section class="lm-chat-page">
+    <div class="lm-chat-window">
+        <header class="lm-chat-top" style="display:none;">
+            <div class="lm-chat-brand" >
+                <div class="lm-chat-titlewrap">
+                    <h1 class="lm-chat-title">LocalMind AI</h1>
+                    <p class="lm-chat-sub">Assist</p>
+                </div>
+            </div>
+            <a href="/" class="lm-chat-close" title="Back to home" aria-label="Close" style="display:none;">×</a>
+        </header>
+
+        <div class="lm-chat-subbar">
+            <label class="lm-chat-subbar-field">
+                <span class="lm-chat-subbar-label">Business</span>
+                <select class="lm-chat-select" @bind="_verticalName" @bind:after="ClearChatOnVerticalChange">
+                    @foreach (BusinessVertical v in Enum.GetValues<BusinessVertical>())
+                    {
+                        <option value="@v.ToString()">@VerticalLabel(v)</option>
+                    }
+                </select>
+            </label>
+            <span class="lm-chat-export-group">
+                <button type="button" class="lm-chat-export-btn" disabled="@(!CanExport || _exportBusy)" @onclick="ExportTextAsync">TXT</button>
+                <button type="button" class="lm-chat-export-btn" disabled="@(!CanExport || _exportBusy)" @onclick="ExportExcelAsync">XLSX</button>
+                <button type="button" class="lm-chat-export-btn" disabled="@(!CanExport || _exportBusy)" @onclick="ExportPdfAsync">PDF</button>
+            </span>
+        </div>
+
+        @if (_lastReply is { DemoModeWithoutLlm: true } last)
+        {
+            <div class="lm-chat-banner" role="status">
+                <strong>Snippet-only mode:</strong>
+                @switch (last.UnavailableReason)
+                {
+                    case LlmUnavailableReason.CloudCredentialsMissing:
+                        <span> Configure API keys or set Provider. See <code>LocalMindAI</code> in settings.</span>
+                        break;
+                    case LlmUnavailableReason.LocalOllamaNotReady:
+                        <span> Start Ollama and run <code>ollama pull @AiOptions.Value.ChatModelId</code>.</span>
+                        break;
+                    case LlmUnavailableReason.ModelInvocationFailed:
+                        <span> Last model request failed—retry after fixing Ollama/network.</span>
+                        break;
+                    default:
+                        <span> Check AI settings.</span>
+                        break;
+                }
+            </div>
+        }
+
+        <div class="lm-chat-messages" aria-live="polite">
+            @if (_lines.Count == 0)
+            {
+                <div class="lm-chat-welcome">
+                    <div class="lm-chat-row lm-chat-row--bot">
+                        <span class="lm-chat-avatar lm-chat-avatar--mark" aria-hidden="true" style="display:none;"><img src="/brand/localmind-mark.svg" alt="" /></span>
+                        <div class="lm-chat-bubble lm-chat-bubble--bot">Welcome to LocalMind AI! How can we help you today?</div>
+                    </div>
+                    <div class="lm-chat-row lm-chat-row--bot">
+                        <span class="lm-chat-avatar lm-chat-avatar--spacer" aria-hidden="true"></span>
+                        <div class="lm-chat-bubble lm-chat-bubble--bot" >Pick your business type above, then ask about hours, services, or policies.</div>
+                    </div>
+                </div>
+            }
+
+            @foreach (var line in _lines)
+            {
+                @if (line.Role.Equals("user", StringComparison.OrdinalIgnoreCase))
+                {
+                    <div class="lm-chat-row lm-chat-row--user">
+                        <div class="lm-chat-bubble lm-chat-bubble--user">@line.Text</div>
+                    </div>
+                }
+                else if (line.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase))
+                {
+                    <div class="lm-chat-row lm-chat-row--bot">
+                        <span class="lm-chat-avatar lm-chat-avatar--mark" aria-hidden="true"><img src="/brand/localmind-mark.svg" alt="" /></span>
+                        <div class="lm-chat-bot-col">
+                            <div class="lm-chat-bubble lm-chat-bubble--bot">@line.Text</div>
+                            <div class="lm-chat-msg-actions" role="toolbar" aria-label="Message actions">
+                                <button type="button" class="lm-chat-icon-btn" title="Copy" aria-label="Copy reply" @onclick="() => CopyReplyAsync(line.Text)">
+                                    <svg class="lm-chat-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                                </button>
+                                <button type="button" class="lm-chat-icon-btn" title="Share" aria-label="Share reply" @onclick="() => ShareReplyAsync(line.Text)">
+                                    <svg class="lm-chat-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>
+                                </button>
+                                <button type="button" class="lm-chat-icon-btn @(IsLiked(line.Id) ? "lm-chat-icon-btn--on" : "")" title="Like" aria-label="Like reply" aria-pressed="@IsLiked(line.Id)" @onclick="() => ToggleLike(line.Id)">
+                                    <svg class="lm-chat-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.82 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"/></svg>
+                                </button>
+                                <button type="button" class="lm-chat-icon-btn @(IsDisliked(line.Id) ? "lm-chat-icon-btn--on" : "")" title="Dislike" aria-label="Dislike reply" aria-pressed="@IsDisliked(line.Id)" @onclick="() => ToggleDislike(line.Id)">
+                                    <svg class="lm-chat-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                }
+                else if (line.Role.Equals("meta", StringComparison.OrdinalIgnoreCase))
+                {
+                    <div class="lm-chat-meta">@line.Text</div>
+                }
+            }
+
+            @if (_busy)
+            {
+                <div class="lm-chat-row lm-chat-row--bot lm-chat-row--typing">
+                    <span class="lm-chat-avatar lm-chat-avatar--mark" aria-hidden="true"><img src="/brand/localmind-mark.svg" alt="" /></span>
+                    <div class="lm-chat-typing">
+                        <span class="lm-chat-typing-dot"></span>
+                        <span class="lm-chat-typing-dot"></span>
+                        <span class="lm-chat-typing-dot"></span>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <details class="lm-chat-details">
+            <summary class="lm-chat-details-sum">WhatsApp &amp; automation</summary>
+            <div class="lm-chat-details-body">
+                @if (WhatsAppClickToChatUrl() is { } waUrl)
+                {
+                    <div class="lm-chat-wa-row">
+                        <a class="lm-chat-wa-link" href="@waUrl" target="_blank" rel="noopener noreferrer">Chat on WhatsApp</a>
+                        <span class="lm-chat-wa-hint">Line for <strong>@CurrentVerticalLabel()</strong></span>
+                    </div>
+                }
+                else
+                {
+                    <p class="lm-chat-wa-note">Set <code>WhatsApp:DefaultClickToChatUrl</code> to show a WhatsApp button.</p>
+                }
+                <div class="lm-chat-wa-flags">
+                    <span>Auto-replies: <strong>@(CurrentWhatsAppFeatures().AutoReply ? "On" : "Off")</strong></span>
+                    <span>Booking: <strong>@(CurrentWhatsAppFeatures().AppointmentBooking ? "On" : "Off")</strong></span>
+                </div>
+            </div>
+        </details>
+
+        <div class="lm-chat-disclaimer">
+            By using this chat, you agree that messages may be processed to generate replies. For details see our
+            <a href="#" class="lm-chat-privacy-link">Privacy Policy</a> (sample link—replace with your policy URL).
+        </div>
+
+        <div class="lm-chat-inputbar">
+            <div class="lm-chat-inputwrap">
+                <input class="lm-chat-field" type="text" @bind="_input" @bind:event="oninput" @onkeydown="OnInputKeyDown" placeholder="Ask me anything…" disabled="@_busy" autocomplete="off" />
+                <button type="button" class="lm-chat-sendico" @onclick="SendAsync" disabled="@_busy" title="Send" aria-label="Send">
+                    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+                </button>
+            </div>
+        </div>
+    </div>
+</section>
+
+@code {
+    private string _verticalName = nameof(BusinessVertical.Shop);
+    private string _businessName = "LocalMind AI Business";
+    private string _input = "";
+    private readonly List<ChatLine> _lines = [];
+    private ChatReply? _lastReply;
+    private bool _busy;
+    private bool _exportBusy;
+
+    private readonly Dictionary<Guid, MessageReaction> _reactions = new();
+
+    private bool CanExport => _lines.Exists(l => l.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase));
+
+    private string? WhatsAppClickToChatUrl()
+    {
+        var v = Enum.Parse<BusinessVertical>(_verticalName, ignoreCase: true);
+        return WhatsAppOptions.Value.GetClickToChatUrl(v);
+    }
+
+    private WhatsAppVerticalFeatures CurrentWhatsAppFeatures() =>
+        WhatsAppOptions.Value.GetFeaturesFor(Enum.Parse<BusinessVertical>(_verticalName, ignoreCase: true));
+
+    private void ClearChatOnVerticalChange()
+    {
+        _lines.Clear();
+        _lastReply = null;
+        _reactions.Clear();
+    }
+
+    private async Task OnInputKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+            await SendAsync();
+    }
+
+    private bool IsLiked(Guid messageId) =>
+        _reactions.TryGetValue(messageId, out var r) && r == MessageReaction.Liked;
+
+    private bool IsDisliked(Guid messageId) =>
+        _reactions.TryGetValue(messageId, out var r) && r == MessageReaction.Disliked;
+
+    private void ToggleLike(Guid messageId)
+    {
+        if (_reactions.TryGetValue(messageId, out var r) && r == MessageReaction.Liked)
+            _reactions.Remove(messageId);
+        else
+            _reactions[messageId] = MessageReaction.Liked;
+    }
+
+    private void ToggleDislike(Guid messageId)
+    {
+        if (_reactions.TryGetValue(messageId, out var r) && r == MessageReaction.Disliked)
+            _reactions.Remove(messageId);
+        else
+            _reactions[messageId] = MessageReaction.Disliked;
+    }
+
+    private async Task CopyReplyAsync(string text)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("localMindChat.copyText", text);
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+    }
+
+    private async Task ShareReplyAsync(string text)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("localMindChat.shareText", "LocalMind AI", text);
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+    }
+
+    private IReadOnlyList<(string Role, string Text)> ExportRows() =>
+        _lines.Select(l => (l.Role, l.Text)).ToList();
+
+    private string CurrentVerticalLabel()
+    {
+        var v = Enum.Parse<BusinessVertical>(_verticalName, ignoreCase: true);
+        return VerticalLabel(v);
+    }
+
+    private string SafeExportBaseName()
+    {
+        var v = Slug(_verticalName);
+        var b = Slug(_businessName);
+        var t = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+        return $"localmind-chat-{v}-{b}-{t}";
+    }
+
+    private async Task ExportTextAsync()
+    {
+        if (!CanExport)
+            return;
+        await RunExportAsync(() =>
+        {
+            var bytes = ChatTranscriptExport.ToUtf8Text(
+                CurrentVerticalLabel(),
+                string.IsNullOrWhiteSpace(_businessName) ? "Local business" : _businessName.Trim(),
+                ExportRows());
+            return (bytes, $"{SafeExportBaseName()}.txt", "text/plain; charset=utf-8");
+        });
+    }
+
+    private async Task ExportExcelAsync()
+    {
+        if (!CanExport)
+            return;
+        await RunExportAsync(() =>
+        {
+            var bytes = ChatTranscriptExport.ToExcel(
+                CurrentVerticalLabel(),
+                string.IsNullOrWhiteSpace(_businessName) ? "Local business" : _businessName.Trim(),
+                ExportRows());
+            return (bytes, $"{SafeExportBaseName()}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        });
+    }
+
+    private async Task ExportPdfAsync()
+    {
+        if (!CanExport)
+            return;
+        await RunExportAsync(() =>
+        {
+            var bytes = ChatTranscriptExport.ToPdf(
+                CurrentVerticalLabel(),
+                string.IsNullOrWhiteSpace(_businessName) ? "Local business" : _businessName.Trim(),
+                ExportRows());
+            return (bytes, $"{SafeExportBaseName()}.pdf", "application/pdf");
+        });
+    }
+
+    private async Task RunExportAsync(Func<(byte[] Bytes, string FileName, string Mime)> build)
+    {
+        _exportBusy = true;
+        try
+        {
+            var (bytes, fileName, mime) = build();
+            var b64 = Convert.ToBase64String(bytes);
+            await JS.InvokeVoidAsync("localmindDownload", fileName, b64, mime);
+        }
+        finally
+        {
+            _exportBusy = false;
+        }
+    }
+
+    private async Task SendAsync()
+    {
+        var text = _input.Trim();
+        if (string.IsNullOrEmpty(text) || _busy)
+            return;
+
+        _busy = true;
+        _lines.Add(new ChatLine(Guid.NewGuid(), "user", text));
+        _input = "";
+        await InvokeAsync(StateHasChanged);
+
+        var vertical = Enum.Parse<BusinessVertical>(_verticalName, ignoreCase: true);
+        var tenant = new TenantContext(
+            TenantId: $"demo-{vertical}-{Slug(_businessName)}",
+            BusinessName: string.IsNullOrWhiteSpace(_businessName) ? "Local business" : _businessName.Trim(),
+            Vertical: vertical);
+
+        try
+        {
+            var reply = await ChatService.ChatAsync(new ChatRequest(text, tenant));
+            _lastReply = reply;
+            _lines.Add(new ChatLine(Guid.NewGuid(), "assistant", reply.Answer));
+            if (reply.Sources is { Count: > 0 })
+            {
+                _lines.Add(new ChatLine(Guid.NewGuid(), "meta", "Sources: " + string.Join(", ", reply.Sources)));
+            }
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string VerticalLabel(BusinessVertical v) => v switch
+    {
+        BusinessVertical.Shop => "Shop / Retail",
+        BusinessVertical.Clinic => "Clinic / Health",
+        BusinessVertical.RealEstate => "Real Estate",
+        _ => v.ToString(),
+    };
+
+    private static string Slug(string s)
+    {
+        var chars = s.Where(char.IsLetterOrDigit).Take(24).ToArray();
+        return chars.Length > 0 ? new string(chars) : "tenant";
+    }
+
+    private sealed record ChatLine(Guid Id, string Role, string Text);
+
+    private enum MessageReaction
+    {
+        Liked,
+        Disliked,
+    }
+}

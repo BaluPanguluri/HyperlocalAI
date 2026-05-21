@@ -1,0 +1,25 @@
+﻿@inherits LayoutComponentBase
+
+<div class="site-shell">
+    <header class="site-nav" role="navigation" aria-label="Main">
+        <a class="site-nav-brand" href="/">
+            <img src="/brand/localmind-mark.svg" width="32" height="32" alt="" class="site-nav-logo" />
+            <span class="site-nav-wordmark"><span class="site-nav-wordmark-strong">LocalMind</span><span class="site-nav-wordmark-ai"> AI</span></span>
+        </a>
+        <nav class="site-nav-links">
+            <NavLink class="site-nav-link" href="/" Match="NavLinkMatch.All">Chatbot</NavLink>
+            <NavLink class="site-nav-link" href="/knowledge" Match="NavLinkMatch.Prefix">Upload Knowledge</NavLink>
+            <NavLink class="site-nav-link" href="/dashboard" Match="NavLinkMatch.Prefix">Business Dashboard</NavLink>
+            <NavLink class="site-nav-link" href="/leads" Match="NavLinkMatch.Prefix">Leads</NavLink>
+        </nav>
+    </header>
+    <main class="site-main">
+        @Body
+    </main>
+</div>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>

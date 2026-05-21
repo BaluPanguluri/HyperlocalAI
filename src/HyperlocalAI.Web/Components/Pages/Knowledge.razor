@@ -1,0 +1,186 @@
+@page "/knowledge"
+@rendermode InteractiveServer
+@using HyperlocalAI.Application.Knowledge
+@inject IKnowledgeDocumentAdmin KnowledgeAdmin
+
+<PageTitle>Knowledge uploads — LocalMind AI</PageTitle>
+
+<section class="know-page">
+    <header class="know-header">
+        <h1>Tenant knowledge</h1>
+        <p class="know-lead">
+            Upload plain-text or PDF documents for the selected business type. Allowed: <strong>.txt</strong>, <strong>.md</strong> (Markdown), <strong>.pdf</strong> (text-based PDFs work best; scanned image PDFs may be empty).
+            Chat uses keyword overlap to pick short excerpts—use clear headings and real keywords (hours, delivery, fees, appointments, etc.).
+            Files are stored under <code>App_Data/tenant-documents/&lt;Shop|Clinic|RealEstate&gt;/</code>.
+        </p>
+    </header>
+
+    <div class="biz-tabs" role="tablist" aria-label="Business type">
+        @foreach (var vertical in _verticalOrder)
+        {
+            <button type="button"
+                    role="tab"
+                    class="biz-tab @(vertical == _selectedVertical ? "biz-tab--active" : null)"
+                    aria-selected="@(vertical == _selectedVertical)"
+                    id="@($"know-tab-{vertical}")"
+                    @onclick="() => SelectVertical(vertical)">
+                @VerticalLabel(vertical)
+            </button>
+        }
+    </div>
+
+    @if (!string.IsNullOrEmpty(_status))
+    {
+        <p class="know-status" role="status">@_status</p>
+    }
+
+    @if (_busy)
+    {
+        <p class="know-loading">Working…</p>
+    }
+
+    <div class="biz-tab-panel know-tab-panel" role="tabpanel" aria-labelledby="@($"know-tab-{_selectedVertical}")">
+        @{
+            var active = _selectedVertical;
+            var files = FilesFor(active);
+        }
+        <div class="know-block-actions">
+            <label class="know-upload-label">
+                <span class="know-upload-btn">Upload document</span>
+                <InputFile OnChange="e => OnFileSelectedAsync(e, active)" accept=".txt,.md,.pdf" class="know-file-input" />
+            </label>
+        </div>
+        <div class="know-table-wrap">
+            @if (files.Count == 0)
+            {
+                <p class="know-empty">No documents yet for @VerticalLabel(active). Upload a file to ground chat answers for this business type.</p>
+            }
+            else
+            {
+                <table class="know-table">
+                    <thead>
+                    <tr>
+                        <th>File</th>
+                        <th>Size</th>
+                        <th>Modified (UTC)</th>
+                        <th></th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var f in files)
+                    {
+                        <tr>
+                            <td><code>@f.FileName</code></td>
+                            <td>@FormatSize(f.SizeBytes)</td>
+                            <td>@f.LastModifiedUtc.ToString("yyyy-MM-dd HH:mm")</td>
+                            <td>
+                                <button type="button" class="know-delete" @onclick="() => DeleteAsync(f.FileName, active)">Remove</button>
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+</section>
+
+@code {
+    private static readonly BusinessVertical[] _verticalOrder =
+    [
+        BusinessVertical.Shop,
+        BusinessVertical.Clinic,
+        BusinessVertical.RealEstate,
+    ];
+
+    private BusinessVertical _selectedVertical = BusinessVertical.Shop;
+    private readonly Dictionary<BusinessVertical, List<KnowledgeFileInfo>> _filesByVertical = new();
+    private bool _busy;
+    private string? _status;
+
+    protected override async Task OnInitializedAsync() => await RefreshAllAsync();
+
+    private void SelectVertical(BusinessVertical v) => _selectedVertical = v;
+
+    private IReadOnlyList<KnowledgeFileInfo> FilesFor(BusinessVertical vertical) =>
+        _filesByVertical.TryGetValue(vertical, out var list) ? list : Array.Empty<KnowledgeFileInfo>();
+
+    private async Task RefreshAllAsync()
+    {
+        _busy = true;
+        try
+        {
+            foreach (var v in _verticalOrder)
+            {
+                var list = await KnowledgeAdmin.ListFilesAsync(v).ConfigureAwait(false);
+                _filesByVertical[v] = list.ToList();
+            }
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task OnFileSelectedAsync(InputFileChangeEventArgs e, BusinessVertical vertical)
+    {
+        var file = e.File;
+        if (file is null)
+            return;
+
+        _status = null;
+        _busy = true;
+        try
+        {
+            await using var stream = file.OpenReadStream(KnowledgeUploadLimits.MaxBytes);
+            await KnowledgeAdmin.UploadAsync(vertical, file.Name, stream).ConfigureAwait(false);
+            _status = $"Uploaded “{file.Name}” for {VerticalLabel(vertical)}.";
+            await RefreshAllAsync();
+        }
+        catch (Exception ex)
+        {
+            _status = $"Upload failed: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteAsync(string fileName, BusinessVertical vertical)
+    {
+        _status = null;
+        _busy = true;
+        try
+        {
+            await KnowledgeAdmin.DeleteAsync(vertical, fileName).ConfigureAwait(false);
+            _status = $"Removed “{fileName}” from {VerticalLabel(vertical)}.";
+            await RefreshAllAsync();
+        }
+        catch (Exception ex)
+        {
+            _status = $"Remove failed: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string VerticalLabel(BusinessVertical v) => v switch
+    {
+        BusinessVertical.Shop => "Shop / retail",
+        BusinessVertical.Clinic => "Clinic / health",
+        BusinessVertical.RealEstate => "Real estate",
+        _ => v.ToString(),
+    };
+
+    private static string FormatSize(long bytes)
+    {
+        if (bytes < 1024)
+            return $"{bytes} B";
+        if (bytes < 1024 * 1024)
+            return $"{bytes / 1024.0:0.#} KB";
+        return $"{bytes / (1024.0 * 1024):0.#} MB";
+    }
+}

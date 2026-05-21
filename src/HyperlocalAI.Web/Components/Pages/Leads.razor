@@ -1,0 +1,286 @@
+@page "/leads"
+@rendermode InteractiveServer
+@using HyperlocalAI.Application.Leads
+@inject ILeadPipelineService LeadPipeline
+
+<PageTitle>Leads — LocalMind AI</PageTitle>
+
+<section class="leads-page">
+    <header class="leads-header">
+        <h1>Lead pipeline</h1>
+        <p class="leads-lead">
+            Contacts captured from web chat and WhatsApp are stored in <strong>SQLite</strong> (<code>App_Data/localmind.db</code> by default). Move stages as your team qualifies opportunities; scores and notes support handoff to CRM or export via API.
+        </p>
+    </header>
+
+    <div class="biz-tabs" role="tablist" aria-label="Business type">
+        @foreach (var vertical in _verticalOrder)
+        {
+            <button type="button"
+                    role="tab"
+                    class="biz-tab @(vertical == _selectedVertical ? "biz-tab--active" : null)"
+                    aria-selected="@(vertical == _selectedVertical)"
+                    id="@($"leads-tab-{vertical}")"
+                    @onclick="@(() => SelectVerticalAsync(vertical))">
+                @VerticalLabel(vertical)
+            </button>
+        }
+    </div>
+
+    <div class="leads-toolbar">
+        <label class="leads-filter">
+            <span>Stage</span>
+            <select class="leads-select" @bind="_stageFilter" @bind:after="OnFilterChangedAsync">
+                <option value="">All</option>
+                @foreach (LeadStage s in Enum.GetValues<LeadStage>())
+                {
+                    <option value="@s.ToString()">@StageLabel(s)</option>
+                }
+            </select>
+        </label>
+    </div>
+
+    @if (_loading)
+    {
+        <p class="leads-loading">Loading…</p>
+    }
+    else if (_pageResult is { } pr)
+    {
+        <div class="leads-table-wrap">
+            <table class="leads-table">
+                <thead>
+                <tr>
+                    <th>Contact</th>
+                    <th>Channel</th>
+                    <th>Stage</th>
+                    <th>Source</th>
+                    <th>Score</th>
+                    <th>Last activity (UTC)</th>
+                </tr>
+                </thead>
+                <tbody>
+                @foreach (var row in pr.Items)
+                {
+                    <tr class="@(_selectedId == row.Id ? "leads-row--active" : null)" @onclick="@(() => SelectRowAsync(row.Id))">
+                        <td>
+                            <span class="leads-contact">@row.ContactKey</span>
+                            @if (!string.IsNullOrEmpty(row.DisplayName))
+                            {
+                                <span class="leads-name">@row.DisplayName</span>
+                            }
+                        </td>
+                        <td>@row.Channel</td>
+                        <td>@StageLabel(row.Stage)</td>
+                        <td>@row.Source</td>
+                        <td>@row.LeadScore</td>
+                        <td>@row.LastActivityUtc.ToString("yyyy-MM-dd HH:mm")</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="leads-pager">
+            <button type="button" class="leads-pager-btn" disabled="@(_page <= 1)" @onclick="PrevPage">Previous</button>
+            <span class="leads-pager-meta">Page @_page of @Math.Max(1, (int)Math.Ceiling(pr.TotalCount / (double)_pageSize)) · @pr.TotalCount total</span>
+            <button type="button" class="leads-pager-btn" disabled="@(_page * _pageSize >= pr.TotalCount)" @onclick="NextPage">Next</button>
+        </div>
+
+        @if (_detail is { } d)
+        {
+            <div class="leads-detail">
+                <h2 class="leads-detail-title">Edit lead</h2>
+                <div class="leads-detail-grid">
+                    <label class="leads-field">
+                        <span>Stage</span>
+                        <select class="leads-select" @bind="_editStageInt">
+                            @foreach (LeadStage s in Enum.GetValues<LeadStage>())
+                            {
+                                <option value="@((int)s)">@StageLabel(s)</option>
+                            }
+                        </select>
+                    </label>
+                    <label class="leads-field">
+                        <span>Score (0–100)</span>
+                        <input type="number" min="0" max="100" class="leads-input" @bind="_editScore" />
+                    </label>
+                    <label class="leads-field leads-field--full">
+                        <span>Display name</span>
+                        <input type="text" class="leads-input" @bind="_editDisplayName" />
+                    </label>
+                    <label class="leads-field leads-field--full">
+                        <span>Email</span>
+                        <input type="email" class="leads-input" @bind="_editEmail" />
+                    </label>
+                    <label class="leads-field leads-field--full">
+                        <span>Notes</span>
+                        <textarea class="leads-textarea" rows="3" @bind="_editNotes"></textarea>
+                    </label>
+                    @if (d.Stage == LeadStage.Lost || (LeadStage)_editStageInt == LeadStage.Lost)
+                    {
+                        <label class="leads-field leads-field--full">
+                            <span>Lost reason</span>
+                            <input type="text" class="leads-input" @bind="_editLostReason" />
+                        </label>
+                    }
+                </div>
+                @if (!string.IsNullOrEmpty(_saveStatus))
+                {
+                    <p class="leads-status" role="status">@_saveStatus</p>
+                }
+                <div class="leads-detail-actions">
+                    <button type="button" class="leads-save" disabled="@_saveBusy" @onclick="SaveDetailAsync">Save</button>
+                </div>
+            </div>
+        }
+    }
+    else
+    {
+        <p class="leads-empty">No data.</p>
+    }
+</section>
+
+@code {
+    private static readonly BusinessVertical[] _verticalOrder =
+    [
+        BusinessVertical.Shop,
+        BusinessVertical.Clinic,
+        BusinessVertical.RealEstate,
+    ];
+
+    private BusinessVertical _selectedVertical = BusinessVertical.Shop;
+    private string _stageFilter = "";
+    private int _page = 1;
+    private const int _pageSize = 20;
+    private PagedLeadsResult? _pageResult;
+    private bool _loading;
+    private Guid? _selectedId;
+    private LeadDetailDto? _detail;
+
+    private int _editStageInt;
+    private int _editScore;
+    private string _editDisplayName = "";
+    private string _editEmail = "";
+    private string _editNotes = "";
+    private string _editLostReason = "";
+    private string _saveStatus = "";
+    private bool _saveBusy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _loading = true;
+        await LoadPageAsync();
+    }
+
+    private async Task SelectVerticalAsync(BusinessVertical v)
+    {
+        _selectedVertical = v;
+        _page = 1;
+        _selectedId = null;
+        _detail = null;
+        await LoadPageAsync();
+    }
+
+    private Task OnFilterChangedAsync() => LoadPageAsync();
+
+    private async Task LoadPageAsync()
+    {
+        _loading = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            LeadStage? st = string.IsNullOrEmpty(_stageFilter) ? null : Enum.Parse<LeadStage>(_stageFilter);
+            _pageResult = await LeadPipeline.ListAsync(_selectedVertical, st, _page, _pageSize).ConfigureAwait(false);
+            if (_selectedId.HasValue)
+            {
+                _detail = await LeadPipeline.GetAsync(_selectedId.Value).ConfigureAwait(false);
+                if (_detail is not null)
+                    BindEdit(_detail);
+            }
+        }
+        finally
+        {
+            _loading = false;
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SelectRowAsync(Guid id)
+    {
+        _selectedId = id;
+        _saveStatus = "";
+        _detail = await LeadPipeline.GetAsync(id).ConfigureAwait(false);
+        if (_detail is not null)
+            BindEdit(_detail);
+    }
+
+    private void BindEdit(LeadDetailDto d)
+    {
+        _editStageInt = (int)d.Stage;
+        _editScore = d.LeadScore;
+        _editDisplayName = d.DisplayName ?? "";
+        _editEmail = d.Email ?? "";
+        _editNotes = d.Notes ?? "";
+        _editLostReason = d.LostReason ?? "";
+    }
+
+    private async Task PrevPage()
+    {
+        if (_page <= 1) return;
+        _page--;
+        await LoadPageAsync();
+    }
+
+    private async Task NextPage()
+    {
+        if (_pageResult is null) return;
+        if (_page * _pageSize >= _pageResult.TotalCount) return;
+        _page++;
+        await LoadPageAsync();
+    }
+
+    private async Task SaveDetailAsync()
+    {
+        if (_detail is null) return;
+        _saveBusy = true;
+        _saveStatus = "";
+        try
+        {
+            var req = new UpdateLeadRequest
+            {
+                Stage = (LeadStage)_editStageInt,
+                LeadScore = _editScore,
+                DisplayName = _editDisplayName,
+                Email = _editEmail,
+                Notes = _editNotes,
+                LostReason = _editLostReason,
+            };
+            _detail = await LeadPipeline.UpdateAsync(_detail.Id, req).ConfigureAwait(false);
+            _saveStatus = "Saved.";
+            await LoadPageAsync();
+        }
+        finally
+        {
+            _saveBusy = false;
+        }
+    }
+
+    private static string VerticalLabel(BusinessVertical v) => v switch
+    {
+        BusinessVertical.Shop => "Shop / retail",
+        BusinessVertical.Clinic => "Clinic / health",
+        BusinessVertical.RealEstate => "Real estate",
+        _ => v.ToString(),
+    };
+
+    private static string StageLabel(LeadStage s) => s switch
+    {
+        LeadStage.New => "New",
+        LeadStage.Contacted => "Contacted",
+        LeadStage.Qualified => "Qualified",
+        LeadStage.Opportunity => "Opportunity",
+        LeadStage.Won => "Won",
+        LeadStage.Lost => "Lost",
+        _ => s.ToString(),
+    };
+}

@@ -1,0 +1,133 @@
+@page "/dashboard"
+@rendermode InteractiveServer
+@inject IBusinessDashboardService BusinessDashboard
+
+<PageTitle>Dashboard — LocalMind AI</PageTitle>
+
+<section class="dash-page">
+    <header class="dash-header">
+        <h1>Business dashboard</h1>
+        <p class="dash-lead">Totals and daily breakdown for the selected business type. Metrics and appointments are persisted to the configured database (default: SQLite under <code>App_Data/localmind.db</code>).</p>
+    </header>
+
+    @if (_loading)
+    {
+        <p class="dash-loading">Loading…</p>
+    }
+    else
+    {
+        <div class="biz-tabs" role="tablist" aria-label="Business type">
+            @foreach (var vertical in _verticalOrder)
+            {
+                <button type="button"
+                        role="tab"
+                        class="biz-tab @(vertical == _selectedVertical ? "biz-tab--active" : null)"
+                        aria-selected="@(vertical == _selectedVertical)"
+                        id="@($"dash-tab-{vertical}")"
+                        @onclick="() => SelectVertical(vertical)">
+                    @VerticalLabel(vertical)
+                </button>
+            }
+        </div>
+
+        <div class="biz-tab-panel dash-tab-panel" role="tabpanel" aria-labelledby="@($"dash-tab-{_selectedVertical}")">
+            @if (CurrentSnapshot is { } snap)
+            {
+                <div class="dash-kpis">
+                    <article class="dash-kpi">
+                        <h3>Total leads</h3>
+                        <p class="dash-kpi-value" title="Distinct contacts (web + WhatsApp)">@snap.TotalLeads</p>
+                        <p class="dash-kpi-hint">First-time chats for this business type</p>
+                    </article>
+                    <article class="dash-kpi">
+                        <h3>Messages handled</h3>
+                        <p class="dash-kpi-value" title="Automated replies">@snap.MessagesHandled</p>
+                        <p class="dash-kpi-hint">Each assistant reply counts once</p>
+                    </article>
+                    <article class="dash-kpi">
+                        <h3>Bookings</h3>
+                        <p class="dash-kpi-value" title="Appointments created">@snap.TotalBookings</p>
+                        <p class="dash-kpi-hint">From WhatsApp BOOK or API</p>
+                    </article>
+                </div>
+                <div class="dash-daily">
+                    <h3 class="dash-daily-title">Daily stats (UTC)</h3>
+                    <div class="dash-table-wrap">
+                        <table class="dash-table">
+                            <thead>
+                            <tr>
+                                <th scope="col">Date</th>
+                                <th scope="col">New leads</th>
+                                <th scope="col">Messages</th>
+                                <th scope="col">Bookings</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            @foreach (var row in snap.DailyStats)
+                            {
+                                <tr>
+                                    <td>@row.Date.ToString("yyyy-MM-dd")</td>
+                                    <td>@row.NewLeads</td>
+                                    <td>@row.MessagesHandled</td>
+                                    <td>@row.Bookings</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <p class="dash-loading">No metrics for this tab.</p>
+            }
+        </div>
+    }
+</section>
+
+@code {
+    private static readonly BusinessVertical[] _verticalOrder =
+    [
+        BusinessVertical.Shop,
+        BusinessVertical.Clinic,
+        BusinessVertical.RealEstate,
+    ];
+
+    private BusinessVertical _selectedVertical = BusinessVertical.Shop;
+    private readonly Dictionary<BusinessVertical, BusinessDashboardSnapshot?> _snapshots = new();
+    private bool _loading = true;
+
+    private BusinessDashboardSnapshot? CurrentSnapshot =>
+        _snapshots.TryGetValue(_selectedVertical, out var s) ? s : null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private void SelectVertical(BusinessVertical v) => _selectedVertical = v;
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            foreach (var v in _verticalOrder)
+            {
+                _snapshots[v] = await BusinessDashboard.GetSnapshotAsync(v, dailyDays: 14).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string VerticalLabel(BusinessVertical v) => v switch
+    {
+        BusinessVertical.Shop => "Shop / retail",
+        BusinessVertical.Clinic => "Clinic / health",
+        BusinessVertical.RealEstate => "Real estate",
+        _ => v.ToString(),
+    };
+}
